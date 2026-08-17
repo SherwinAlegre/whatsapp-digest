@@ -62,6 +62,11 @@ and sets up the background connection plus the 9am schedule.
 
 ## Step 4 — Walk them through Telegram
 
+First, say why, in one sentence — "create a bot" sounds alarming to someone who has
+not done it before. Something like: *"Telegram is how the report reaches your phone.
+You'll make a personal bot that only messages you — it takes about three minutes,
+and it's free."*
+
 This is a conversation, not a command. Ask them to do this on their phone, one step
 at a time, and wait for each:
 
@@ -106,6 +111,22 @@ continue and hope.
 
 > If they paste something with no colon, it is the chat id, not the token. Ask for
 > the token again, from @BotFather → `/mytoken`.
+
+Once it is working, mention this once and move on — do not make a production of it:
+
+> *"That token is now in our chat history. It only controls a bot that messages you,
+> so the risk is small — but if you'd rather replace it later, @BotFather → `/revoke`
+> issues a new one, and I can update the setting for you."*
+
+Common snags, so you recognise them:
+
+- **`getUpdates` returns an empty `result`** — they have not messaged the bot yet, or
+  they messaged a different bot. Ask them to open the chat with the bot they just
+  created and send "hi".
+- **BotFather says the username is taken** — usernames are global. Suggest adding
+  digits or their initials.
+- **They only have Telegram on a computer** — that is fine, the same steps work
+  there.
 
 ## Step 5 — Have them link WhatsApp
 
