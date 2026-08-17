@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/mdp/qrterminal"
+	_ "modernc.org/sqlite"
 
 	"bytes"
 
@@ -46,15 +46,49 @@ type MessageStore struct {
 	db *sql.DB
 }
 
+// sqlitePragmas keep the two processes that share these files honest: the Go
+// bridge writes while the Python MCP server reads, so WAL plus a busy timeout
+// is what stops one blocking the other.
+const sqlitePragmas = "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+
+// storeDir resolves where the databases live. This used to be the literal
+// relative path "store", which silently followed the shell's working directory:
+// launching the same binary from a different folder produced a different, empty
+// database. Anchor it to a stable per-user location instead.
+func storeDir() (string, error) {
+	if override := os.Getenv("WHATSAPP_STORE_DIR"); override != "" {
+		return override, nil
+	}
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve user config dir: %v", err)
+	}
+	return filepath.Join(base, "whatsapp-bridge", "store"), nil
+}
+
+// storeDSN builds a SQLite connection string for a database in the store dir.
+func storeDSN(filename string) (string, error) {
+	dir, err := storeDir()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create store directory %s: %v", dir, err)
+	}
+	// Forward slashes keep the URI valid on Windows too.
+	p := filepath.ToSlash(filepath.Join(dir, filename))
+	return "file:" + p + sqlitePragmas, nil
+}
+
 // Initialize message store
 func NewMessageStore() (*MessageStore, error) {
-	// Create directory for database if it doesn't exist
-	if err := os.MkdirAll("store", 0755); err != nil {
-		return nil, fmt.Errorf("failed to create store directory: %v", err)
+	dsn, err := storeDSN("messages.db")
+	if err != nil {
+		return nil, err
 	}
 
 	// Open SQLite database for messages
-	db, err := sql.Open("sqlite3", "file:store/messages.db?_foreign_keys=on")
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open message database: %v", err)
 	}
@@ -641,7 +675,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	// Download the media using whatsmeow client
-	mediaData, err := client.Download(downloader)
+	mediaData, err := client.Download(context.Background(), downloader)
 	if err != nil {
 		return false, "", "", "", fmt.Errorf("failed to download media: %v", err)
 	}
@@ -794,20 +828,33 @@ func main() {
 	// Create database connection for storing session data
 	dbLog := waLog.Stdout("Database", "INFO", true)
 
-	// Create directory for database if it doesn't exist
-	if err := os.MkdirAll("store", 0755); err != nil {
-		logger.Errorf("Failed to create store directory: %v", err)
+	sessionDSN, err := storeDSN("whatsapp.db")
+	if err != nil {
+		logger.Errorf("Failed to resolve store directory: %v", err)
+		return
+	}
+	if dir, e := storeDir(); e == nil {
+		fmt.Printf("Store directory: %s\n", dir)
+	}
+
+	// Open the session DB ourselves with the pure-Go driver, then hand the
+	// *sql.DB to whatsmeow. We still declare the dialect as "sqlite3" because
+	// whatsmeow uses that string to pick its SQL dialect, not just the driver.
+	sessionDB, err := sql.Open("sqlite", sessionDSN)
+	if err != nil {
+		logger.Errorf("Failed to open session database: %v", err)
 		return
 	}
 
-	container, err := sqlstore.New("sqlite3", "file:store/whatsapp.db?_foreign_keys=on", dbLog)
-	if err != nil {
-		logger.Errorf("Failed to connect to database: %v", err)
+	container := sqlstore.NewWithDB(sessionDB, "sqlite3", dbLog)
+	// NewWithDB, unlike New, does not run migrations for us.
+	if err := container.Upgrade(context.Background()); err != nil {
+		logger.Errorf("Failed to upgrade session database: %v", err)
 		return
 	}
 
 	// Get device store - This contains session information
-	deviceStore, err := container.GetFirstDevice()
+	deviceStore, err := container.GetFirstDevice(context.Background())
 	if err != nil {
 		if err == sql.ErrNoRows {
 			// No device exists, create one
@@ -850,6 +897,12 @@ func main() {
 
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
+
+		default:
+			// Diagnostic: surface every other event type so we can see what the
+			// server is actually sending. Without this, a missing history sync
+			// is indistinguishable from a dead connection.
+			fmt.Printf("[event] %T\n", evt)
 		}
 	})
 
@@ -973,7 +1026,7 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 
 		// If we didn't get a name, try group info
 		if name == "" {
-			groupInfo, err := client.GetGroupInfo(jid)
+			groupInfo, err := client.GetGroupInfo(context.Background(), jid)
 			if err == nil && groupInfo.Name != "" {
 				name = groupInfo.Name
 			} else {
@@ -988,7 +1041,7 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		logger.Infof("Getting name for contact: %s", chatJID)
 
 		// Just use contact info (full name)
-		contact, err := client.Store.Contacts.GetContact(jid)
+		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
 		if err == nil && contact.FullName != "" {
 			name = contact.FullName
 		} else if sender != "" {

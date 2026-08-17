@@ -1,3 +1,28 @@
+# Never commit message data or session credentials.
+store/
 *.db
-claude_desktop_config.json
-whatsapp.log
+*.db-wal
+*.db-shm
+
+# Telegram token lives in the OS config dir, but guard against copies landing here.
+telegram.json
+
+# Logs
+*.log
+*.err
+*.out
+
+# Prebuilt bridge binaries ARE committed, so a Mac user needs neither Go nor a
+# C compiler. ~17MB each, well inside GitHub's limits. They are pure-Go and
+# cross-compiled; see README "What this fork changes".
+# Local build artefacts stay out:
+whatsapp-bridge/whatsapp-bridge
+whatsapp-bridge/whatsapp-bridge.exe
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+
+# macOS
+.DS_Store

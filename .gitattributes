@@ -1,0 +1,11 @@
+# Shell scripts must keep LF endings or bash on macOS/Linux fails with
+# "bad interpreter: /usr/bin/env bash^M". This repo is authored on Windows.
+*.sh    text eol=lf
+*.py    text eol=lf
+
+# PowerShell 5.1 reads .ps1 as ANSI unless there is a UTF-8 BOM; keep CRLF and
+# do not let git rewrite them.
+*.ps1   text eol=crlf
+
+*.go    text eol=lf
+*.md    text eol=lf
