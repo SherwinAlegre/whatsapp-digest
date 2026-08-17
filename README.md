@@ -146,7 +146,7 @@ claude mcp add whatsapp -s user -- "$(where.exe uv)" --directory "$PWD/whatsapp-
 Then create `%APPDATA%\whatsapp-bridge\telegram.json`:
 
 ```json
-{ "bot_token": "8123456789:AAH...", "chat_id": "123456789" }
+{ "bot_token": "PASTE_TOKEN_FROM_BOTFATHER", "chat_id": "PASTE_CHAT_ID" }
 ```
 
 Schedule the daily run:
@@ -172,7 +172,8 @@ Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
 
 1. Telegram → search **@BotFather** → Start
 2. `/newbot` → give it a name → give it a username ending in `bot`
-3. Copy the token. **It contains a colon**: `8123456789:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`
+3. Copy the token. **It contains a colon** — the part before it is digits, the part
+   after is a long random string: `<10 digits>:<35 random characters>`
 4. **Send your new bot any message.** Required — a bot cannot message you first.
 5. Open `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates` and find `"id"` under `"chat"`
 
