@@ -1,7 +1,9 @@
 # Shell scripts must keep LF endings or bash on macOS/Linux fails with
 # "bad interpreter: /usr/bin/env bash^M". This repo is authored on Windows.
-*.sh    text eol=lf
-*.py    text eol=lf
+# .command files are double-clicked in Finder and fail the same way.
+*.sh      text eol=lf
+*.command text eol=lf
+*.py      text eol=lf
 
 # PowerShell 5.1 reads .ps1 as ANSI unless there is a UTF-8 BOM; keep CRLF and
 # do not let git rewrite them.

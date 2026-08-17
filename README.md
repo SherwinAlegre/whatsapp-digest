@@ -62,6 +62,23 @@ specifically so that binaries can be cross-compiled and shipped.
 
 ## Install (macOS)
 
+### The easy way — let Claude Code do it
+
+If you have Claude Code on your Mac, you never need to open a terminal. Open it and
+paste this:
+
+> Please install the WhatsApp daily digest for me. Follow the instructions at
+> https://github.com/SherwinAlegre/whatsapp-digest/blob/whatsapp-digest/INSTALL-WITH-CLAUDE.md
+> — do the setup yourself rather than giving me commands to run, and walk me through
+> the two parts you can't do (creating a Telegram bot and scanning the QR code).
+
+Claude will download it, install everything, talk you through creating the Telegram
+bot on your phone, open a window with the QR code for you to scan, and check that it
+works. Approve the actions it asks permission for. Budget about 20 minutes, most of
+it waiting.
+
+### The manual way
+
 ```bash
 git clone https://github.com/SherwinAlegre/whatsapp-digest.git
 cd whatsapp-digest

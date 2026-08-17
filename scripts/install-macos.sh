@@ -59,20 +59,39 @@ ok "registered (restart Claude Code to load the tools)"
 bold "4. Telegram configuration"
 if [[ -f "$SUPPORT_DIR/telegram.json" ]]; then
   ok "config already exists - leaving it alone"
+elif [[ -n "${SKIP_TELEGRAM:-}" ]]; then
+  warn "skipped (SKIP_TELEGRAM set) - configure it later, then run scripts/doctor.sh"
 else
-  cat <<'EOS'
+  # Credentials may arrive three ways: environment (an assistant or script
+  # driving this install), an interactive prompt, or not at all. Never block on
+  # a prompt when nothing is attached to answer it -- that hangs the install
+  # with no visible cause.
+  TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+  CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+
+  if [[ -z "$TOKEN" || -z "$CHAT_ID" ]]; then
+    if [[ ! -t 0 ]]; then
+      warn "no Telegram credentials and no terminal to ask on - skipping"
+      warn "set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID and re-run, or run scripts/doctor.sh later"
+      SKIP_TELEGRAM=1
+    else
+      cat <<'EOS'
   Create a bot: Telegram -> @BotFather -> /newbot
-  Copy the token it gives you. It CONTAINS A COLON, like 8123456789:AAH...
+  Copy the token it gives you. It CONTAINS A COLON, like <digits>:<random text>
   Then message your new bot once (a bot cannot message you first), and open
     https://api.telegram.org/bot<TOKEN>/getUpdates
   to find your chat id (the "id" nested under "chat").
 
 EOS
-  read -rp "  Bot token: " TOKEN
-  read -rp "  Chat id:   " CHAT_ID
+      [[ -z "$TOKEN" ]] && read -rp "  Bot token: " TOKEN
+      [[ -z "$CHAT_ID" ]] && read -rp "  Chat id:   " CHAT_ID
+    fi
+  fi
+fi
 
+if [[ ! -f "$SUPPORT_DIR/telegram.json" && -z "${SKIP_TELEGRAM:-}" ]]; then
   if [[ "$TOKEN" != *:* ]]; then
-    die "That is not a bot token - it has no colon. You have probably pasted the chat id. Re-run when you have the token from @BotFather."
+    die "That is not a bot token - it has no colon. You have probably pasted the chat id. Get the token from @BotFather (/mytoken) and re-run."
   fi
 
   "$PYTHON" - "$SUPPORT_DIR/telegram.json" "$TOKEN" "$CHAT_ID" <<'PY'
