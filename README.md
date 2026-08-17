@@ -63,7 +63,7 @@ specifically so that binaries can be cross-compiled and shipped.
 ## Install (macOS)
 
 ```bash
-git clone <your-fork-url> whatsapp-digest
+git clone https://github.com/SherwinAlegre/whatsapp-digest.git
 cd whatsapp-digest
 bash scripts/install-macos.sh
 ```
@@ -112,7 +112,7 @@ You should see `whatsapp: ... - ✓ Connected`.
 Same design, different mechanics. PowerShell, Task Scheduler instead of launchd:
 
 ```powershell
-git clone <your-fork-url> whatsapp-digest
+git clone https://github.com/SherwinAlegre/whatsapp-digest.git
 cd whatsapp-digest
 # Register the MCP server (note: run this from Git Bash, not PowerShell --
 # PowerShell swallows the `--` separator)
