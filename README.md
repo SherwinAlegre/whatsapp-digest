@@ -85,14 +85,38 @@ Scan the QR code: **WhatsApp → Settings → Linked Devices → Link a Device**
 > It refreshes every ~20 seconds, so if you miss one, wait for the next rather than
 > restarting.
 
-History sync takes a few minutes. Then test the whole pipeline end to end:
+History sync takes a few minutes. Then test the pipeline — **through launchd, not by
+hand**:
 
 ```bash
-bash scripts/run_digest.sh
+launchctl kickstart -k gui/$(id -u)/com.whatsappdigest.daily
 ```
 
-A Telegram message should arrive within seconds. If it does, you're done — it will
-now run every day at 9am on its own.
+This matters. Running `bash scripts/run_digest.sh` yourself uses *your* shell
+environment; the 9am job runs under launchd's, which is far more restricted. Testing
+the wrong one is how you get a setup that looks fine and then silently does nothing
+every morning.
+
+A Telegram message should arrive within a minute. If it does, you're done.
+
+### If something looks wrong
+
+```bash
+bash scripts/doctor.sh
+```
+
+Checks every dependency, the binary, the bridge process, database freshness, your
+Telegram token, the MCP registration, and whether both launchd agents are loaded —
+and tells you the fix for anything that fails. Add `--send-test` to also push a test
+message to Telegram.
+
+If the digest works by hand but not on schedule:
+
+```bash
+bash scripts/doctor.sh --launchd
+```
+
+which re-runs every check under launchd's minimal `PATH`.
 
 ### Restart Claude Code
 
@@ -238,6 +262,24 @@ that way so it can't be committed.
 ---
 
 ## Troubleshooting
+
+**Start here:** `bash scripts/doctor.sh` diagnoses everything below automatically and
+prints the fix for whatever fails. The entries here explain *why*, for when the fix
+isn't obvious.
+
+**It works when I run it manually, but nothing arrives at 9am**
+The most likely failure on a fresh install. `launchd` does not give scheduled jobs your
+shell's `PATH` — it hands over roughly `/usr/bin:/bin:/usr/sbin:/sbin`, so Homebrew,
+npm-global and `~/.local` binaries are all invisible. `claude` is usually the casualty.
+
+The scripts resolve every executable explicitly (`scripts/lib.sh`) and the installer
+also writes an explicit `PATH` into both plists, so this should not happen — but if it
+does, reproduce it exactly with:
+```bash
+bash scripts/doctor.sh --launchd
+```
+Note the digest degrades rather than failing here: if `claude` can't be found it sends
+the unfiltered list with a note, instead of sending nothing.
 
 **`Client outdated (405)` on startup**
 whatsmeow is too old for WhatsApp's current protocol. Update it:

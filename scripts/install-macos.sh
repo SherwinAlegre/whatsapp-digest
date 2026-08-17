@@ -6,79 +6,105 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SUPPORT_DIR="$HOME/Library/Application Support/whatsapp-bridge"
-AGENTS_DIR="$HOME/Library/LaunchAgents"
-BRIDGE_BIN="$REPO_DIR/bin/whatsapp-bridge-$(uname -m | sed 's/x86_64/amd64/')"
+# shellcheck source=lib.sh
+source "$REPO_DIR/scripts/lib.sh"
 
-bold() { printf '\033[1m%s\033[0m\n' "$1"; }
+AGENTS_DIR="$HOME/Library/LaunchAgents"
+BRIDGE_BIN=$(bridge_binary "$REPO_DIR")
+
+bold() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
 die()  { printf '  \033[31m✗\033[0m %s\n' "$1" >&2; exit 1; }
 
 bold "1. Checking prerequisites"
 
-command -v claude >/dev/null 2>&1 || die "Claude Code not found. Install the desktop app and sign in first: https://claude.com/claude-code"
-ok "claude found: $(command -v claude)"
+CLAUDE=$(find_bin claude) || die "Claude Code not found. Install the desktop app and sign in first: https://claude.com/claude-code"
+ok "claude: $CLAUDE"
 
-command -v python3 >/dev/null 2>&1 || die "python3 not found. Install it: brew install python"
-ok "python3 found: $(python3 --version)"
+PYTHON=$(find_bin python3) || die "python3 not found. Install it: brew install python"
+ok "python3: $PYTHON ($("$PYTHON" --version 2>&1))"
 
-if ! command -v uv >/dev/null 2>&1; then
+if ! UV=$(find_bin uv); then
   warn "uv not found - installing"
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
+  UV=$(find_bin uv) || die "uv install failed. Install manually, then re-run."
 fi
-ok "uv found: $(command -v uv)"
+ok "uv: $UV"
 
-[[ -x "$BRIDGE_BIN" ]] || die "No bridge binary for your architecture at $BRIDGE_BIN
-Build one with:  cd whatsapp-bridge && CGO_ENABLED=0 go build -o ../bin/whatsapp-bridge-\$(uname -m) ."
+[[ -f "$BRIDGE_BIN" ]] || die "No bridge binary for $(uname -m) at $BRIDGE_BIN
+Available: $(ls "$REPO_DIR/bin" 2>/dev/null | tr '\n' ' ')
+Or build one: cd whatsapp-bridge && CGO_ENABLED=0 go build -o '$BRIDGE_BIN' ."
 ok "bridge binary: $(basename "$BRIDGE_BIN")"
 
-# macOS quarantines binaries downloaded from the internet. Unsigned ones are
+# macOS quarantines anything downloaded from the internet. Unsigned binaries are
 # refused outright until the attribute is cleared.
 if xattr -p com.apple.quarantine "$BRIDGE_BIN" >/dev/null 2>&1; then
   xattr -d com.apple.quarantine "$BRIDGE_BIN" 2>/dev/null || true
   ok "cleared macOS quarantine flag"
 fi
-chmod +x "$BRIDGE_BIN"
+chmod +x "$BRIDGE_BIN" "$REPO_DIR/scripts/"*.sh
 
 mkdir -p "$SUPPORT_DIR" "$AGENTS_DIR"
 
-bold "2. Installing the Python MCP server dependencies"
-(cd "$REPO_DIR/whatsapp-mcp-server" && uv sync --quiet)
-ok "dependencies installed"
+bold "2. Installing Python dependencies"
+(cd "$REPO_DIR/whatsapp-mcp-server" && "$UV" sync --quiet)
+ok "installed"
 
 bold "3. Registering the MCP server with Claude Code"
-claude mcp remove whatsapp -s user >/dev/null 2>&1 || true
-claude mcp add whatsapp -s user -- "$(command -v uv)" --directory "$REPO_DIR/whatsapp-mcp-server" run main.py
+"$CLAUDE" mcp remove whatsapp -s user >/dev/null 2>&1 || true
+"$CLAUDE" mcp add whatsapp -s user -- "$UV" --directory "$REPO_DIR/whatsapp-mcp-server" run main.py
 ok "registered (restart Claude Code to load the tools)"
 
 bold "4. Telegram configuration"
 if [[ -f "$SUPPORT_DIR/telegram.json" ]]; then
   ok "config already exists - leaving it alone"
 else
-  echo "  Create a bot: Telegram -> @BotFather -> /newbot"
-  echo "  Then message your new bot once, and open:"
-  echo "    https://api.telegram.org/bot<TOKEN>/getUpdates"
-  echo "  to find your chat id (the \"id\" under \"chat\")."
-  echo
-  read -rp "  Bot token (looks like 8123456789:AAH...): " TOKEN
-  read -rp "  Chat id (a number): " CHAT_ID
-  python3 - "$SUPPORT_DIR/telegram.json" "$TOKEN" "$CHAT_ID" <<'PY'
+  cat <<'EOS'
+  Create a bot: Telegram -> @BotFather -> /newbot
+  Copy the token it gives you. It CONTAINS A COLON, like 8123456789:AAH...
+  Then message your new bot once (a bot cannot message you first), and open
+    https://api.telegram.org/bot<TOKEN>/getUpdates
+  to find your chat id (the "id" nested under "chat").
+
+EOS
+  read -rp "  Bot token: " TOKEN
+  read -rp "  Chat id:   " CHAT_ID
+
+  if [[ "$TOKEN" != *:* ]]; then
+    die "That is not a bot token - it has no colon. You have probably pasted the chat id. Re-run when you have the token from @BotFather."
+  fi
+
+  "$PYTHON" - "$SUPPORT_DIR/telegram.json" "$TOKEN" "$CHAT_ID" <<'PY'
 import json, sys
 path, token, chat = sys.argv[1:4]
 json.dump({"bot_token": token, "chat_id": chat}, open(path, "w"), indent=1)
 PY
   chmod 600 "$SUPPORT_DIR/telegram.json"
+
   # Verify now rather than discovering it is wrong at 9am tomorrow.
-  if curl -sS "https://api.telegram.org/bot${TOKEN}/getMe" | grep -q '"ok":true'; then
+  if curl -sS --max-time 20 "https://api.telegram.org/bot${TOKEN}/getMe" | grep -q '"ok":true'; then
     ok "token verified"
   else
-    warn "token did not verify - check it and re-run, or edit $SUPPORT_DIR/telegram.json"
+    warn "token rejected by Telegram - fix it in $SUPPORT_DIR/telegram.json, then run: bash scripts/doctor.sh"
   fi
 fi
 
 bold "5. Scheduling"
+
+# Stop anything already running, or the new agent fights it for port 8080 and
+# the database.
+if pgrep -f "whatsapp-bridge" >/dev/null 2>&1; then
+  launchctl unload "$AGENTS_DIR/com.whatsappdigest.bridge.plist" 2>/dev/null || true
+  pkill -f "whatsapp-bridge" 2>/dev/null || true
+  sleep 2
+  ok "stopped an existing bridge process"
+fi
+
+# launchd hands jobs a minimal PATH. The scripts resolve binaries themselves
+# (scripts/lib.sh), but setting PATH here too means anything they shell out to
+# also works. Both belts, because the failure is silent and daily.
+LAUNCH_PATH="$(dirname "$CLAUDE"):$(dirname "$PYTHON"):$(dirname "$UV"):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 cat > "$AGENTS_DIR/com.whatsappdigest.bridge.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -87,6 +113,7 @@ cat > "$AGENTS_DIR/com.whatsappdigest.bridge.plist" <<PLIST
 <dict>
   <key>Label</key><string>com.whatsappdigest.bridge</string>
   <key>ProgramArguments</key><array><string>$BRIDGE_BIN</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$LAUNCH_PATH</string></dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>StandardOutPath</key><string>$SUPPORT_DIR/bridge.log</string>
@@ -94,7 +121,7 @@ cat > "$AGENTS_DIR/com.whatsappdigest.bridge.plist" <<PLIST
 </dict>
 </plist>
 PLIST
-ok "bridge agent written (starts at login, restarts if it dies)"
+ok "bridge agent (starts at login, restarts if it dies)"
 
 cat > "$AGENTS_DIR/com.whatsappdigest.daily.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -104,15 +131,14 @@ cat > "$AGENTS_DIR/com.whatsappdigest.daily.plist" <<PLIST
   <key>Label</key><string>com.whatsappdigest.daily</string>
   <key>ProgramArguments</key>
   <array><string>/bin/bash</string><string>$REPO_DIR/scripts/run_digest.sh</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$LAUNCH_PATH</string></dict>
   <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
   <key>StandardOutPath</key><string>$SUPPORT_DIR/digest.out</string>
   <key>StandardErrorPath</key><string>$SUPPORT_DIR/digest.err</string>
 </dict>
 </plist>
 PLIST
-ok "daily agent written (09:00; launchd runs it on wake if you were asleep)"
-
-chmod +x "$REPO_DIR/scripts/run_digest.sh"
+ok "daily agent (09:00; launchd runs it on wake if you were asleep)"
 
 for label in bridge daily; do
   launchctl unload "$AGENTS_DIR/com.whatsappdigest.$label.plist" 2>/dev/null || true
@@ -120,20 +146,27 @@ for label in bridge daily; do
 done
 ok "agents loaded"
 
-bold "Done. One step left:"
+bold "6. Checking the install"
+bash "$REPO_DIR/scripts/doctor.sh" || true
+
+bold "One step left: link your phone"
 cat <<EOF
 
-  The bridge is now running and waiting for you to link it.
-  Watch the log and scan the QR code with your phone:
+  The bridge is running and waiting for you to scan its QR code:
 
       tail -f "$SUPPORT_DIR/bridge.log"
 
   On your phone: WhatsApp -> Settings -> Linked Devices -> Link a Device
+  Use a full-size terminal window; a narrow one mangles the QR code.
 
-  History sync takes a few minutes. Then test the whole pipeline:
+  History sync takes a few minutes. Once it finishes, test the REAL scheduled
+  path -- not just running the script by hand, which uses a different PATH:
 
-      bash "$REPO_DIR/scripts/run_digest.sh"
+      launchctl kickstart -k gui/\$(id -u)/com.whatsappdigest.daily
 
-  You should get a Telegram message within a few seconds.
+  A Telegram message should arrive within a minute. If it does, you are done.
+  If it does not:
+
+      bash "$REPO_DIR/scripts/doctor.sh" --launchd
 
 EOF
